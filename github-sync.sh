@@ -1,5 +1,4 @@
 #!/bin/bash
-set -e
 
 echo "========================================="
 echo "[OmniRoute] Starting with GitHub Sync..."
@@ -44,7 +43,7 @@ else
 fi
 
 echo "-----------------------------------------"
-echo "[OmniRoute] Starting main server..."
+echo "[OmniRoute] Starting main server on port ${PORT:-20128}..."
 echo "-----------------------------------------"
 cd /app
 node dev/run-standalone.mjs &
@@ -71,9 +70,14 @@ do_sync() {
     fi
 }
 
-trap 'echo "[GitHub Sync] Shutdown received! Performing final sync..."; do_sync; kill $APP_PID; exit 0' SIGTERM SIGINT
+trap 'echo "[GitHub Sync] Shutdown received! Performing final sync..."; do_sync; kill $APP_PID 2>/dev/null; exit 0' SIGTERM SIGINT
 
 while true; do
+    if ! kill -0 "$APP_PID" 2>/dev/null; then
+        echo "[OmniRoute] ❌ Main application exited. Terminating container."
+        wait "$APP_PID"
+        exit $?
+    fi
     sleep 30 &
     wait $!
     do_sync
