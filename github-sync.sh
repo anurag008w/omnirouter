@@ -1,0 +1,80 @@
+#!/bin/bash
+set -e
+
+echo "========================================="
+echo "[OmniRoute] Starting with GitHub Sync..."
+echo "========================================="
+
+BACKUP_REPO_NAME="OmniRoute-Data-Backup"
+GITHUB_USER="anurag008w"
+DATA_DIR="/app/data"
+
+mkdir -p "$DATA_DIR"
+cd "$DATA_DIR"
+
+git config --global user.name "OmniRouter Auto-Sync"
+git config --global user.email "sync@omnirouter.local"
+git config --global init.defaultBranch main
+git config --global pull.rebase false
+
+if [ -n "$GITHUB_PAT" ]; then
+    echo "[GitHub Sync] Checking backup repository '$BACKUP_REPO_NAME'..."
+    STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: token $GITHUB_PAT" "https://api.github.com/repos/$GITHUB_USER/$BACKUP_REPO_NAME")
+    
+    if [ "$STATUS_CODE" -eq 404 ]; then
+        echo "[GitHub Sync] Repository not found. Creating private repo '$BACKUP_REPO_NAME'..."
+        curl -s -X POST -H "Authorization: token $GITHUB_PAT" -d "{\"name\":\"$BACKUP_REPO_NAME\", \"private\": true}" https://api.github.com/user/repos
+        if [ ! -d ".git" ]; then
+            git init
+            git remote add origin "https://${GITHUB_PAT}@github.com/${GITHUB_USER}/${BACKUP_REPO_NAME}.git"
+            git checkout -b main 2>/dev/null || true
+        fi
+    else
+        echo "[GitHub Sync] Backup repository found! Restoring previous data..."
+        if [ ! -d ".git" ]; then
+            git init
+            git remote add origin "https://${GITHUB_PAT}@github.com/${GITHUB_USER}/${BACKUP_REPO_NAME}.git"
+            git fetch origin main 2>/dev/null || true
+            git checkout -f main 2>/dev/null || true
+            echo "[GitHub Sync] ✅ Previous data restored successfully!"
+        fi
+    fi
+else
+    echo "[GitHub Sync] ⚠️ GITHUB_PAT is not set! Running without cloud backup."
+fi
+
+echo "-----------------------------------------"
+echo "[OmniRoute] Starting main server..."
+echo "-----------------------------------------"
+cd /app
+node dev/run-standalone.mjs &
+APP_PID=$!
+
+do_sync() {
+    if [ -z "$GITHUB_PAT" ]; then
+        return
+    fi
+    cd "$DATA_DIR"
+    if [ ! -d ".git" ]; then
+        git init
+        git remote add origin "https://${GITHUB_PAT}@github.com/${GITHUB_USER}/${BACKUP_REPO_NAME}.git"
+        git checkout -b main 2>/dev/null || true
+    else
+        git remote set-url origin "https://${GITHUB_PAT}@github.com/${GITHUB_USER}/${BACKUP_REPO_NAME}.git"
+    fi
+
+    if [ -n "$(git status --porcelain)" ]; then
+        echo "[GitHub Sync] Changes detected in $DATA_DIR. Backing up to GitHub..."
+        git add -A
+        git commit -m "Auto-backup: $(date +'%Y-%m-%d %H:%M:%S')" 2>/dev/null || true
+        git push -u origin main 2>/dev/null || echo "[GitHub Sync] Push failed, will retry next interval."
+    fi
+}
+
+trap 'echo "[GitHub Sync] Shutdown received! Performing final sync..."; do_sync; kill $APP_PID; exit 0' SIGTERM SIGINT
+
+while true; do
+    sleep 30 &
+    wait $!
+    do_sync
+done
