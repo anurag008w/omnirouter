@@ -1,7 +1,7 @@
 #!/bin/bash
 
 echo "========================================="
-echo "[OmniRoute] Starting with Lightweight Git Sync..."
+echo "[OmniRoute] Starting with Full GitHub Sync..."
 echo "========================================="
 
 BACKUP_REPO_NAME="OmniRoute-Data-Backup"
@@ -11,23 +11,11 @@ DATA_DIR="/app/data"
 mkdir -p "$DATA_DIR"
 cd "$DATA_DIR"
 
-# Configure Git with ultra-low memory usage
+# Configure Git
 git config --global user.name "OmniRouter Auto-Sync"
 git config --global user.email "sync@omnirouter.local"
 git config --global init.defaultBranch main
 git config --global pull.rebase false
-git config --global pack.threads 1
-git config --global core.packedGitLimit 16m
-git config --global core.packedGitWindowSize 16m
-
-# Add .gitignore so git never tracks heavy temporary WAL files or backup snapshots
-cat << 'EOF' > "$DATA_DIR/.gitignore"
-*.sqlite-shm
-*.sqlite-wal
-*.sqlite-journal
-logs/
-db_backups/
-EOF
 
 if [ -n "$GITHUB_PAT" ]; then
     echo "[GitHub Sync] Checking backup repository '$BACKUP_REPO_NAME'..."
@@ -76,7 +64,7 @@ do_sync() {
     fi
 
     if [ -n "$(git status --porcelain)" ]; then
-        echo "[GitHub Sync] Changes detected. Backing up to GitHub..."
+        echo "[GitHub Sync] Changes detected. Backing up all files to GitHub..."
         git add -A
         git commit -m "Auto-backup: $(date +'%Y-%m-%d %H:%M:%S')" 2>/dev/null || true
         git push -u origin main 2>/dev/null || echo "[GitHub Sync] Push failed, will retry next interval."
@@ -91,7 +79,7 @@ while true; do
         wait "$APP_PID"
         exit $?
     fi
-    sleep 60 &
+    sleep 30 &
     wait $!
     do_sync
 done
