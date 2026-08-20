@@ -1,7 +1,7 @@
 #!/bin/bash
 
 echo "========================================="
-echo "[OmniRoute] Starting with GitHub Sync..."
+echo "[OmniRoute] Starting with Lightweight Git Sync..."
 echo "========================================="
 
 BACKUP_REPO_NAME="OmniRoute-Data-Backup"
@@ -11,17 +11,30 @@ DATA_DIR="/app/data"
 mkdir -p "$DATA_DIR"
 cd "$DATA_DIR"
 
+# Configure Git with ultra-low memory usage
 git config --global user.name "OmniRouter Auto-Sync"
 git config --global user.email "sync@omnirouter.local"
 git config --global init.defaultBranch main
 git config --global pull.rebase false
+git config --global pack.threads 1
+git config --global core.packedGitLimit 16m
+git config --global core.packedGitWindowSize 16m
+
+# Add .gitignore so git never tracks heavy temporary WAL files or backup snapshots
+cat << 'EOF' > "$DATA_DIR/.gitignore"
+*.sqlite-shm
+*.sqlite-wal
+*.sqlite-journal
+logs/
+db_backups/
+EOF
 
 if [ -n "$GITHUB_PAT" ]; then
     echo "[GitHub Sync] Checking backup repository '$BACKUP_REPO_NAME'..."
     STATUS_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: token $GITHUB_PAT" "https://api.github.com/repos/$GITHUB_USER/$BACKUP_REPO_NAME")
     
     if [ "$STATUS_CODE" -eq 404 ]; then
-        echo "[GitHub Sync] Repository not found. Creating private repo '$BACKUP_REPO_NAME'..."
+        echo "[GitHub Sync] Creating private backup repo '$BACKUP_REPO_NAME'..."
         curl -s -X POST -H "Authorization: token $GITHUB_PAT" -d "{\"name\":\"$BACKUP_REPO_NAME\", \"private\": true}" https://api.github.com/user/repos
         if [ ! -d ".git" ]; then
             git init
@@ -63,7 +76,7 @@ do_sync() {
     fi
 
     if [ -n "$(git status --porcelain)" ]; then
-        echo "[GitHub Sync] Changes detected in $DATA_DIR. Backing up to GitHub..."
+        echo "[GitHub Sync] Changes detected. Backing up to GitHub..."
         git add -A
         git commit -m "Auto-backup: $(date +'%Y-%m-%d %H:%M:%S')" 2>/dev/null || true
         git push -u origin main 2>/dev/null || echo "[GitHub Sync] Push failed, will retry next interval."
@@ -78,7 +91,7 @@ while true; do
         wait "$APP_PID"
         exit $?
     fi
-    sleep 30 &
+    sleep 60 &
     wait $!
     do_sync
 done
